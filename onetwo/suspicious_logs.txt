@@ -1,0 +1,2 @@
+2025-01-14 23:18:01.825 MSK [5079] [0] [4/28]: user=postgres,db=cyber-security,app=psql,client=[local] STATEMENT:  SELECT name, email FROM users GROUP BY name, email HAVING OR '1=1';
+2025-01-14 23:18:32.330 MSK [5079] [0] [4/29]: user=postgres,db=cyber-security,app=psql,client=[local] STATEMENT:  SELECT name, age FROM employees UNION SELECT username, password FROM users;

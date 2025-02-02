@@ -1,0 +1,8 @@
+server:192.168.1.91
+port:22
+login:postgres
+password:7898
+email:213
+telegram:123
+path_to_logs:/data/logs/postgres/postgres.log
+auto_block:7
