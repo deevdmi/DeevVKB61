@@ -205,8 +205,12 @@ def go_ssh_func():
         for line in iter(stdout.readline, ""):
             line = line.strip()
             print(line)
-
-            # Поиск слова 'STATEMENT' в строке
+            
+        if is_excluded(ip, user, query):
+        return  # Если запрос в исключениях, ничего не делаем
+            
+        # Поиск слова 'STATEMENT' в строке
+        
             if "STATEMENT" in line:
                 print('true')
                 # Извлечение самого SQL-запроса
@@ -254,6 +258,139 @@ def go_ssh():
     thread = threading.Thread(target=go_ssh_func)
     thread.daemon = True  # Поток завершится при закрытии программы
     thread.start()
+
+# Блок блокирования
+def block_ip_iptables(host, username, password, ip_address):
+    # Блокировка IP-адреса через iptables.
+    ip_address = entry22.get()
+    command = f"sudo iptables -A INPUT -s {ip_address} -j DROP"
+    output, error = ssh_execute(host, username, password, command)
+    if error:
+        print(f"Ошибка при блокировке IP {ip_address}: {error}")
+    else:
+        print(f"IP {ip_address} успешно заблокирован.")
+
+
+def block_db_user(host, username, password, db_user):
+    # Блокировка пользователя в PostgreSQL.
+    db_user = entry21.get()
+    command = f"psql -U postgres -c \"ALTER ROLE {db_user} WITH NOLOGIN;\""
+    output, error = ssh_execute(host, username, password, command)
+    if error:
+        print(f"Ошибка при блокировке пользователя {db_user}: {error}")
+    else:
+        print(f"Пользователь {db_user} успешно заблокирован.")
+
+
+def terminate_db_process(host, username, password, pid):
+    # Завершение процесса PostgreSQL по PID.
+    pid = entry23.get()
+    command = f"psql -U postgres -c \"SELECT pg_terminate_backend({pid});\""
+    output, error = ssh_execute(host, username, password, command)
+    if error:
+        print(f"Ошибка при завершении процесса {pid}: {error}")
+    else:
+        print(f"Процесс {pid} успешно завершён.")
+
+# Автоматическое блокирование
+def block_ip_if_needed(host, username, password, ip_address, n):
+    # Блокирует IP, если число опасных запросов превышает порог n.
+    n = int(entry37.get())
+    count = count_dangerous_queries(host, username, password, ip_address, n)
+    
+    if count > n:
+        print(f"Обнаружено {count} опасных запросов с IP {ip_address}. Блокируем...")
+        block_ip_iptables(host, username, password, ip_address)
+    else:
+        print(f"Опасных запросов с {ip_address}: {count}. Блокировка не требуется.")
+
+# Исключения
+EXCLUSIONS_FILE = "exclusions.txt"
+
+def load_exclusions():
+    """Загружает исключения из файла в три списка: IP-адреса, пользователи и фрагменты запросов."""
+    ip_exclusions = entry39.get()
+    user_exclusions = entry38.get()
+    query_exclusions = entry40.get()
+    
+    if not os.path.exists(EXCLUSIONS_FILE):
+        return ip_exclusions, user_exclusions, query_exclusions
+
+    with open(EXCLUSIONS_FILE, "r") as file:
+        for line in file:
+            line = line.strip()
+            if line.startswith("IP:"):
+                ip_exclusions.add(line.replace("IP:", "").strip())
+            elif line.startswith("USER:"):
+                user_exclusions.add(line.replace("USER:", "").strip())
+            elif line.startswith("QUERY:"):
+                query_exclusions.add(line.replace("QUERY:", "").strip())
+
+    return ip_exclusions, user_exclusions, query_exclusions
+
+def add_to_exclusions(category, value):
+    """Добавляет IP, пользователя или запрос в исключения и сохраняет в файл."""
+    if category not in ["IP", "USER", "QUERY"]:
+        raise ValueError("Категория должна быть 'IP', 'USER' или 'QUERY'.")
+
+    with open(EXCLUSIONS_FILE, "a") as file:
+        file.write(f"{category}:{value}\n")
+    
+    print(f"Добавлено в исключения: {category} -> {value}")
+
+
+def is_excluded(ip, user, query):
+    """Проверяет, находится ли IP, пользователь или запрос в списке исключений."""
+    ip_exclusions, user_exclusions, query_exclusions = load_exclusions()
+
+    if ip in ip_exclusions:
+        print(f"IP {ip} в списке исключений, не блокируем.")
+        return True
+    if user in user_exclusions:
+        print(f"Пользователь {user} в списке исключений, не блокируем.")
+        return True
+    for exclusion in query_exclusions:
+        if exclusion in query:
+            print(f"Запрос '{query}' содержит исключённую строку '{exclusion}', не блокируем.")
+            return True
+
+    return False
+
+# Уведомление администратора по почте
+def send_email_notification(email, subject, message):
+    # Отправляет email-уведомление.
+    sender_email = entry34.get()
+    
+    msg = MIMEText(message)
+    msg["Subject"] = subject
+    msg["From"] = sender_email
+    msg["To"] = email
+
+    try:
+        with smtplib.SMTP("smtp.example.com", 587) as server:  # Укажите SMTP-сервер
+            server.starttls()
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, email, msg.as_string())
+            print(f"Email-уведомление отправлено на {email}")
+    except Exception as e:
+        print(f"Ошибка отправки email: {e}")
+
+# Уведомление администратора в Телеграмме
+def send_telegram_notification(bot_token, chat_id, message):
+    # Отправляет уведомление в Telegram.
+telegram_login = entry35.get()
+    
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": message}
+    
+    try:
+        response = requests.post(url, json=payload)
+        if response.status_code == 200:
+            print(f"✅ Telegram-уведомление отправлено в чат {chat_id}")
+        else:
+            print(f"❌ Ошибка Telegram API: {response.text}")
+    except Exception as e:
+        print(f"❌ Ошибка отправки Telegram-сообщения: {e}")
 
 root = Tk()
 root.title('SQL-Injection')
