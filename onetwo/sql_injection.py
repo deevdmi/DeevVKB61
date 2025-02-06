@@ -192,6 +192,16 @@ def go_ssh_func():
             r"(?i)'.*or.*=.*",  # Одинарная кавычка с условием
             r"(?i)\".*--",  # Двойные кавычки с комментарием
             r";\s*(DROP|INSERT|DELETE|UPDATE)\b",  # Завершение запроса и опасные операторы
+            r"(?i)(\bor\b\s*1\s*=\s*1\b)",  # OR 1=1
+            r"(?i)(\bunion\b.*\bselect\b)",  # UNION SELECT
+            r"(?i)(\bselect\b.*\bfrom\b.*\binformation_schema\b)",  # Обход через information_schema
+            r"(?i)(\bupdate\b.*\bset\b.*=.*)",  # Изменение данных через UPDATE
+            r"(?i)(\bdelete\b.*\bfrom\b)",  # Удаление через DELETE
+            r"(?i)(\binsert\b.*\binto\b)",  # Вставка данных через INSERT
+            r"(?i)(\bdrop\b\s+\b(table|database|view|procedure)\b)",  # DROP TABLE и другие DDL-команды
+            r"(?i)(\bexec\b.*\bxp_cmdshell\b)",  # Выполнение системных команд
+            r"(?i)(\b--\b|\b#\b)",  # SQL комментарии
+            r"(?i)(\bbenchmark\b.*\(\d+,\s*md5\()")  # Временные атаки (time-based)
         ]
 
         # Открытие файла для записи результатов
@@ -386,11 +396,42 @@ telegram_login = entry35.get()
     try:
         response = requests.post(url, json=payload)
         if response.status_code == 200:
-            print(f"✅ Telegram-уведомление отправлено в чат {chat_id}")
+            print(f"Telegram-уведомление отправлено в чат {chat_id}")
         else:
-            print(f"❌ Ошибка Telegram API: {response.text}")
+            print(f"Ошибка Telegram API: {response.text}")
     except Exception as e:
-        print(f"❌ Ошибка отправки Telegram-сообщения: {e}")
+        print(f"Ошибка отправки Telegram-сообщения: {e}")
+
+def detect_anomalous_behavior(ip: str, user: str, query: str, threshold=5, time_window=60) -> bool:
+    # Выявление аномального поведения: слишком много запросов за короткий период или подозрительные изменения.
+    current_time = time.time()
+    QUERY_LOGS[ip].append((current_time, query))
+
+    # Фильтруем запросы, оставляем только недавние
+    QUERY_LOGS[ip] = [(t, q) for t, q in QUERY_LOGS[ip] if current_time - t <= time_window]
+
+    # Анализ частоты запросов
+    if len(QUERY_LOGS[ip]) > threshold:
+        print(f"[ALERT] Аномальная активность от {ip} (более {threshold} запросов за {time_window} секунд)")
+        return True
+
+    # Анализ структуры запросов (например, изменение паттерна запросов пользователя)
+    query_types = set()
+    for _, q in QUERY_LOGS[ip]:
+        if "SELECT" in q.upper():
+            query_types.add("SELECT")
+        elif "INSERT" in q.upper():
+            query_types.add("INSERT")
+        elif "UPDATE" in q.upper():
+            query_types.add("UPDATE")
+        elif "DELETE" in q.upper():
+            query_types.add("DELETE")
+
+    if len(query_types) > 10:  # Например, если в течение минуты используются более 10 разных типов команд
+        print(f"[ALERT] Подозрительная смена типов запросов от {user} ({query_types})")
+        return True
+
+    return False
 
 root = Tk()
 root.title('SQL-Injection')
